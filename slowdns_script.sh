@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.3"
+SCRIPT_VERSION="9.2.4"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -1219,53 +1219,63 @@ update_motd_script() {
     local motd_script="/etc/profile.d/slowdns_info.sh"
     cat > "$motd_script" << 'MOTD_EOF'
 #!/bin/bash
-USER_DB="/etc/slowdns/users.txt"
-USAGE_DIR="/etc/slowdns/usage"
-CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-RED='\033[0;31m'; WHITE='\033[1;37m'; BRED='\033[1;31m'; NC='\033[0m'
-[[ ! -f "$USER_DB" ]] && return 0
-me=$(whoami)
-user_line=$(grep "^${me}|" "$USER_DB" 2>/dev/null)
-[[ -z "$user_line" ]] && return 0
-IFS='|' read -r u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit <<< "$user_line"
-gb_limit=${gb_limit:-0}; acc_status=${acc_status:-active}; conn_limit=${conn_limit:-0}
-current=$(date +%s)
-exp_unix=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-days_left=$(( (exp_unix - current) / 86400 ))
-bytes=0
-raw=$(iptables -L "slowdns_${me}" -xvn 2>/dev/null | awk 'NR==3{print $2}')
-[[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
-saved=0
-[[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
-[[ "$saved" =~ ^[0-9]+$ ]] || saved=0
-total=$(( bytes + saved ))
-usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
-echo ""
-echo -e "${BRED}╔═══════════════════════════════════════════════════════╗${NC}"
-echo -e "${BRED}║  ☠  BLACK KILLER — SSH TUNNEL MANAGER v9.0 ULTRA  ☠  ║${NC}"
-echo -e "${BRED}║            📱 WhatsApp: +255658785522               ║${NC}"
-echo -e "${BRED}╠═══════════════════════════════════════════════════════╣${NC}"
-printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "👤 USERNAME:" "$me"
-printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${YELLOW}%-32s${NC}${CYAN}║${NC}\n" "📅 EXPIRES:" "$exp"
-if [[ "$acc_status" == "locked" ]]; then
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "🔒 STATUS:" "LOCKED"
-elif [[ $current -gt $exp_unix ]]; then
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "EXPIRED"
-elif [[ $days_left -le 3 ]]; then
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS (EXPIRING SOON!)"
-else
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS"
-fi
-if [[ "$gb_limit" -gt 0 ]]; then
-    pct=$(awk "BEGIN{printf \"%.0f\", ($usage_gb/$gb_limit)*100}")
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / ${gb_limit} GB (${pct}%)"
-else
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / UNLIMITED"
-fi
-cl_text="$([ "$conn_limit" -eq 0 ] && echo UNLIMITED || echo "$conn_limit")"
-printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔗 CONN LIMIT:" "$cl_text"
-echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
-echo ""
+# Wrapped in a function so 'return' works whether this script is
+# sourced by a login shell or executed directly by sshd/PAM.
+_bk_motd() {
+    local USER_DB="/etc/slowdns/users.txt"
+    local USAGE_DIR="/etc/slowdns/usage"
+    local CYAN='\033[0;36m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
+    local RED='\033[0;31m' WHITE='\033[1;37m' BRED='\033[1;31m' NC='\033[0m'
+    [[ ! -f "$USER_DB" ]] && return 0
+    local me
+    me=$(whoami)
+    local user_line
+    user_line=$(grep "^${me}|" "$USER_DB" 2>/dev/null)
+    [[ -z "$user_line" ]] && return 0
+    local u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit
+    IFS='|' read -r u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit <<< "$user_line"
+    gb_limit=${gb_limit:-0}; acc_status=${acc_status:-active}; conn_limit=${conn_limit:-0}
+    local current exp_unix days_left
+    current=$(date +%s)
+    exp_unix=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+    days_left=$(( (exp_unix - current) / 86400 ))
+    local bytes=0 raw saved=0 total usage_gb
+    raw=$(iptables -L "slowdns_${me}" -xvn 2>/dev/null | awk 'NR==3{print $2}')
+    [[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
+    [[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
+    [[ "$saved" =~ ^[0-9]+$ ]] || saved=0
+    total=$(( bytes + saved ))
+    usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
+    echo ""
+    echo -e "${BRED}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BRED}║  ☠  BLACK KILLER — SSH TUNNEL MANAGER v9.0 ULTRA  ☠  ║${NC}"
+    echo -e "${BRED}║            📱 WhatsApp: +255658785522               ║${NC}"
+    echo -e "${BRED}╠═══════════════════════════════════════════════════════╣${NC}"
+    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "👤 USERNAME:" "$me"
+    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${YELLOW}%-32s${NC}${CYAN}║${NC}\n" "📅 EXPIRES:" "$exp"
+    if [[ "$acc_status" == "locked" ]]; then
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "🔒 STATUS:" "LOCKED"
+    elif [[ $current -gt $exp_unix ]]; then
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "EXPIRED"
+    elif [[ $days_left -le 3 ]]; then
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS (EXPIRING SOON!)"
+    else
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS"
+    fi
+    if [[ "$gb_limit" -gt 0 ]]; then
+        local pct
+        pct=$(awk "BEGIN{printf \"%.0f\", ($usage_gb/$gb_limit)*100}")
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / ${gb_limit} GB (${pct}%)"
+    else
+        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / UNLIMITED"
+    fi
+    local cl_text
+    cl_text="$([ "$conn_limit" -eq 0 ] && echo UNLIMITED || echo "$conn_limit")"
+    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔗 CONN LIMIT:" "$cl_text"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+_bk_motd
 MOTD_EOF
     chmod +x "$motd_script" 2>/dev/null
 }
