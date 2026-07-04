@@ -216,7 +216,7 @@ wget -O /usr/local/bin/menu https://raw.githubusercontent.com/cyberhinju-blip/BL
 | Version | Changes |
 |---------|---------|
 | v9.2.3 | Upgraded SSH optimization block: MaxSessions/MaxStartups/RekeyLimit/ClientAlive/PrintMotd |
-| v9.2.2 | Restored conn_limit prompt; clean Samwelmushi sshd conflict |
+| v9.2.2 | Restored conn_limit prompt; clean sshd conflict |
 | v9.2.1 | Fixed kick-out bug — `exit`→`return` in `/etc/profile.d` MOTD script |
 | v9.2.0 | Removed multi-login limiter daemon; added emergency recovery one-liner |
 | v9.1.0 | Remove multi-login limiter daemon completely |
