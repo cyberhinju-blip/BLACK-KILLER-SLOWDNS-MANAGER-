@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLACK KILLER SSH TUNNEL MANAGER — Preview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  #terminal {
+    background: #0d0d0d;
+    border: 2px solid #cc0000;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 780px;
+    box-shadow: 0 0 40px rgba(200,0,0,0.3), 0 0 80px rgba(200,0,0,0.1);
+    overflow: hidden;
+  }
+  .titlebar {
+    background: #1a0000;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #cc0000;
+  }
+  .dot { width:12px; height:12px; border-radius:50%; }
+  .dot.r { background:#ff5f57; }
+  .dot.y { background:#febc2e; }
+  .dot.g { background:#28c840; }
+  .titlebar-label { color:#888; font-size:12px; margin-left:auto; margin-right:auto; }
+  #screen {
+    padding: 16px 20px;
+    min-height: 520px;
+    color: #e0e0e0;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .input-row {
+    display:flex;
+    align-items:center;
+    padding: 8px 20px 14px;
+    border-top: 1px solid #1a1a1a;
+    gap: 8px;
+  }
+  .prompt { color:#cc0000; font-weight:bold; white-space:nowrap; font-family:'Courier New',monospace; }
+  #cmd-input {
+    flex:1;
+    background:transparent;
+    border:none;
+    outline:none;
+    color:#fff;
+    font-family:'Courier New',monospace;
+    font-size:13px;
+    caret-color:#cc0000;
+  }
+  /* ANSI colour helpers */
+  .r  { color: #ff4444; }
+  .g  { color: #44ff44; }
+  .y  { color: #ffcc00; }
+  .b  { color: #4488ff; }
+  .c  { color: #00cccc; }
+  .w  { color: #ffffff; }
+  .p  { color: #cc66ff; }
+  .br { color: #ff2222; font-weight:bold; }
+  .bg { color: #22ff22; font-weight:bold; }
+  .by { color: #ffdd00; font-weight:bold; }
+  .bc { color: #00eeff; font-weight:bold; }
+  .dim { color: #555; }
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .sep { color:#cc0000; }
+  /* clickable menu items */
+  .menu-item {
+    cursor:pointer;
+    display:inline-block;
+    transition: background 0.15s;
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+  .menu-item:hover { background: rgba(200,0,0,0.25); }
+  /* breadcrumb */
+  #breadcrumb {
+    padding: 6px 20px;
+    font-size:11px;
+    color:#555;
+    border-bottom:1px solid #1a1a1a;
+    letter-spacing:0.5px;
+  }
+</style>
+</head>
+<body>
+<div id="terminal">
+  <div class="titlebar">
+    <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+    <span class="titlebar-label">root@vps — BLACK KILLER SSH TUNNEL MANAGER v9.2.3</span>
+  </div>
+  <div id="breadcrumb">📍 MAIN MENU</div>
+  <div id="screen"></div>
+  <div class="input-row">
+    <span class="prompt">root@vps:~# </span>
+    <input id="cmd-input" type="text" autocomplete="off" spellcheck="false" placeholder="type choice and press Enter, or click a menu item…">
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const screen = $('screen');
+const input = $('cmd-input');
+const breadcrumb = $('breadcrumb');
+
+// ---------- colour helpers ----------
+const c = (cls, txt) => `<span class="${cls}">${txt}</span>`;
+const r = t => c('r',t), g = t => c('g',t), y = t => c('y',t),
+      b = t => c('b',t), cy = t => c('c',t), w = t => c('w',t),
+      p = t => c('p',t), br = t => c('br',t), bg = t => c('bg',t),
+      by = t => c('by',t), bc = t => c('bc',t), sep = t => c('sep',t);
+
+const SEP  = sep('◇────────────────────────────────────────────────────────◇');
+const SEPL = sep('◇──────────────────────────────────────◇');
+const BOT  = sep('⋘═══════════════════════════════════════════════════════════⋙');
+
+function dtitle(txt) {
+  return `<span style="background:#00008b;color:#fff;font-weight:bold;padding:2px 6px;border-radius:3px"> ${txt} </span>`;
+}
+
+// ---------- clickable menu item ----------
+function mi(key, label, action) {
+  return `<span class="menu-item" onclick="choose('${action||key}')">${key}${label}</span>`;
+}
+
+// ---------- BANNER ----------
+function banner() {
+  return `<span style="color:#cc0000">
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║  ██████╗ ██╗      █████╗  ██████╗██╗  ██╗                    ║
+║  ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝                    ║
+║  ██████╔╝██║     ███████║██║     █████╔╝                     ║
+║  ██╔══██╗██║     ██╔══██║██║     ██╔═██╗                     ║
+║  ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗                    ║
+║  ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝                    ║
+║                                                               ║
+║  ██╗  ██╗██╗██╗     ██╗     ███████╗██████╗                  ║
+║  ██║ ██╔╝██║██║     ██║     ██╔════╝██╔══██╗                 ║
+║  █████╔╝ ██║██║     ██║     █████╗  ██████╔╝                 ║
+║  ██╔═██╗ ██║██║     ██║     ██╔══╝  ██╔══██╗                 ║
+║  ██║  ██╗██║███████╗███████╗███████╗██║  ██║                 ║
+║  ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝                 ║
+║                                                               ║
+║  ╔═══════════════════════════════════════════════════════╗   ║
+║  ║   ☠  SSH TUNNEL MANAGER v9.2.3 ULTRA DIAMOND  ☠      ║   ║
+║  ║       ▸▸ CREATED BY BLACK KILLER ◂◂                   ║   ║
+║  ║       📱 WhatsApp: +255658785522                      ║   ║
+║  ╚═══════════════════════════════════════════════════════╝   ║
+║                                                               ║
+║▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓║
+╚═══════════════════════════════════════════════════════════════╝</span>
+`;
+}
+
+// ---------- SCREENS ----------
+const SCREENS = {
+
+  main() {
+    breadcrumb.textContent = '📍 MAIN MENU';
+    return banner() + `
+${SEP}
+  ${w('VERSION: 9.2.3 ULTRA DIAMOND |')} ${br('CREATED BY BLACK KILLER')}
+${SEP}
+
+  ${mi(g('  1)'), '  🌐 DNSTT MANAGEMENT',   'dnstt')}
+  ${mi(b('  2)'), '  👥 SSH USERS',           'ssh')}
+  ${mi(y('  3)'), '  🖥️  SYSTEM TOOLS',        'system')}
+  ${mi(r('  0)'), '  ⛔ EXIT',                'exit')}
+
+${SEP}
+`;
+  },
+
+  dnstt() {
+    breadcrumb.textContent = '📍 MAIN MENU › 🌐 DNSTT MANAGEMENT';
+    return banner() + `
+${dtitle('🌐 DNSTT MANAGEMENT')}
+${SEP}
+
+  ${mi(g('  1)'), '  📦 INSTALL / SETUP DNSTT',     'dnstt_install')}
+  ${mi(cy(' 2)'), '  📊 VIEW STATUS',                'dnstt_status')}
+  ${mi(cy(' 3)'), '  📋 CONNECTION INFO',             'dnstt_info')}
+  ${mi(cy(' 4)'), '  📖 VIEW LOGS',                   'dnstt_logs')}
+  ${mi(cy(' 5)'), '  ⚡ PERFORMANCE MONITOR',         'dnstt_perf')}
+  ${mi(cy(' 6)'), '  📈 REAL-TIME STATISTICS',        'dnstt_stats')}
+  ${mi(cy(' 7)'), '  🌐 BANDWIDTH TEST',              'dnstt_bw')}
+  ${mi(y('  8)'), '  🔧 FIX DOMAIN ISSUE',            'dnstt_fix')}
+  ${mi(y('  9)'), '  🔍 TROUBLESHOOT',                'dnstt_ts')}
+  ${mi(g(' 10)'), '  🔄 RESTART SERVICE',             'dnstt_restart')}
+  ${mi(cy('11)'), '  💾 BACKUP CONFIG',               'dnstt_bkp')}
+  ${mi(cy('12)'), '  📥 RESTORE CONFIG',              'dnstt_rst')}
+  ${mi(r(' 13)'), '  ⏹️  STOP SERVICE',               'dnstt_stop')}
+  ${mi(r(' 14)'), '  🗑️  UNINSTALL',                  'dnstt_uninstall')}
+  ${mi(w('  0)'), '  ⬅️  BACK',                       'main')}
+
+`;
+  },
+
+  dnstt_install() {
+    breadcrumb.textContent = '📍 MAIN MENU › DNSTT MANAGEMENT › INSTALL';
+    return `
+${dtitle('⚡ DNSTT ULTRA v2.0 INSTALLATION — BLACK KILLER ⚡')}
+${SEP}
+
+${g('[SUCCESS]')} OS DETECTED: Ubuntu 22.04 LTS
+${g('[SUCCESS]')} ROOT ACCESS CONFIRMED
+
+${cy('STEP 1/8')} — INSTALLING DEPENDENCIES...
+  ${g('✓')} wget curl git gcc make iptables
+  ${g('✓')} openssh-server screen lsof bc
+
+${cy('STEP 2/8')} — INSTALLING GOLANG 1.21...
+  ${g('✓')} Go installed: go version go1.21.0 linux/amd64
+
+${cy('STEP 3/8')} — BUILDING DNSTT SERVER...
+  ${g('✓')} dnstt-server compiled successfully
+
+${cy('STEP 4/8')} — APPLYING SYSTEM OPTIMIZATION...
+  ${g('✓')} BBR congestion control enabled
+  ${g('✓')} Network buffers maximized (1GB)
+  ${g('✓')} UDP optimization applied
+
+${cy('STEP 5/8')} — OPTIMIZING SSH SERVER...
+  ${g('✓')} sshd_config updated (chacha20-poly1305, ETM MACs)
+  ${g('✓')} MaxSessions=500, MaxStartups=200:30:1000
+  ${g('✓')} RekeyLimit=32M 15m, ClientAliveInterval=20
+
+${cy('STEP 6/8')} — CONFIGURING FIREWALL...
+  ${g('✓')} UFW disabled (ACCEPT policy set)
+  ${g('✓')} iptables rules applied
+
+${cy('STEP 7/8')} — MTU SELECTION:
+
+  ${cy('  1)')} 512   — CLASSIC DNS ${g('✓ MOST COMPATIBLE')}
+  ${cy('  2)')} 1024  — STANDARD
+  ${cy('  3)')} 1232  — EDNS0 STANDARD
+  ${cy('  4)')} 1280  — HIGH SPEED ${g('⭐')}
+  ${cy('  5)')} 1420  — VERY HIGH SPEED ${g('⭐⭐ BEST FOR SSH')}
+  ${cy('  6)')} 4096  — EDNS0 MAXIMUM ${y('⚡ ULTRA')}
+  ${y('  7)')} CUSTOM
+
+${y('RECOMMENDED: OPTION 5 (1420) FOR MAXIMUM SSH SPEED')}
+
+<span class="menu-item" onclick="choose('dnstt')">${w('  [← BACK TO DNSTT MENU]')}</span>
+`;
+  },
+
+  dnstt_status() {
+    breadcrumb.textContent = '📍 MAIN MENU › DNSTT MANAGEMENT › STATUS';
+    return `
+${dtitle('📊 DNSTT SERVICE STATUS')}
+${SEP}
+
+  ${w('SERVICE        :')} ${g('● RUNNING')}
+  ${w('PID            :')} ${cy('14821')}
+  ${w('UPTIME         :')} ${cy('2d 14h 33m')}
+  ${w('PORT           :')} ${cy('5300/UDP')}
+  ${w('DOMAIN         :')} ${cy('t.yourdomain.com')}
+  ${w('NAMESERVER     :')} ${cy('ns.yourdomain.com')}
+  ${w('MTU            :')} ${cy('1420')}
+  ${w('PUBLIC KEY     :')} ${cy('a1b2c3d4e5f6...')}
+  ${w('MODE           :')} ${cy('DNSTT UDP (Direct SSH)')}
+
+${BOT}
+  ${g('ACTIVE CONNECTIONS:')} ${cy('3')}
+
+  USER        IP              CONNECTED    DATA
+  ${g('john')}        103.x.x.x       2h 14m       ${cy('124 MB')}
+  ${g('alice')}       41.x.x.x        45m          ${cy('38 MB')}
+  ${g('bob')}         196.x.x.x       12m          ${cy('5 MB')}
+${BOT}
+
+<span class="menu-item" onclick="choose('dnstt')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  dnstt_info() {
+    breadcrumb.textContent = '📍 MAIN MENU › DNSTT MANAGEMENT › CONNECTION INFO';
+    return `
+${dtitle('📋 CLIENT CONNECTION INFO')}
+${SEP}
+
+${BOT}
+  ${w('SERVER IP      :')} ${y('203.0.113.42')}
+  ${w('PUBLIC KEY     :')} ${cy('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4')}
+  ${w('TUNNEL DOMAIN  :')} ${cy('t.yourdomain.com')}
+  ${w('NS DOMAIN      :')} ${cy('ns.yourdomain.com')}
+  ${w('UDP PORT       :')} ${cy('5300')}
+  ${w('SSH PORT       :')} ${cy('22')}
+  ${w('MTU            :')} ${cy('1420')}
+${BOT}
+
+${y('CLIENT COMMAND:')}
+  dnstt-client -udp ${y('203.0.113.42')}:5300 \\
+    -pubkey ${cy('a1b2c3d4...')} \\
+    -mtu 1420 \\
+    ${cy('t.yourdomain.com')}
+
+${y('THEN SSH:')}
+  ssh -D 1080 -p 22 username@127.0.0.1
+
+${y('DNS RECORDS NEEDED:')}
+  A  Record:  ${cy('ns.yourdomain.com')} → ${y('203.0.113.42')}
+  NS Record:  ${cy('t.yourdomain.com')}  → ${cy('ns.yourdomain.com')}
+
+<span class="menu-item" onclick="choose('dnstt')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh() {
+    breadcrumb.textContent = '📍 MAIN MENU › 👥 SSH USER MANAGEMENT';
+    return banner() + `
+${dtitle('👥 SSH USER MANAGEMENT')}
+${SEP}
+
+  ${w('TOTAL:')} ${cy('4')}  |  ${g('ACTIVE: 3')}  |  ${r('EXPIRED: 0')}  |  ${y('LOCKED: 1')}  |  ${g('🔄 AUTO: 2')}
+
+  ${mi(g('  1)'), '  👤 ADD NEW USER',          'ssh_add')}
+  ${mi(cy(' 2)'), '  📋 LIST ALL USERS',         'ssh_list')}
+  ${mi(y('  3)'), '  🔄 RENEW USER',             'ssh_renew')}
+  ${mi(y('  4)'), '  🔒 LOCK ACCOUNT',           'ssh_lock')}
+  ${mi(g('  5)'), '  🔓 UNLOCK ACCOUNT',         'ssh_unlock')}
+  ${mi(p('  6)'), '  🖥️  SSH BANNER',             'ssh_banner')}
+  ${mi(g('  7)'), '  ♻️  AUTO-RENEW SETTINGS',    'ssh_ar')}
+  ${mi(cy(' 8)'), '  📊 AUTO-RENEW STATUS',       'ssh_ar_status')}
+  ${mi(y('  9)'), '  💾 BACKUP & RESTORE',        'ssh_backup')}
+  ${mi(r(' 10)'), '  🗑️  DELETE USER',             'ssh_del')}
+  ${mi(w('  0)'), '  ⬅️  BACK',                   'main')}
+
+${SEP}
+${y('🚨 EMERGENCY RECOVERY (run on server if users locked out):')}
+${w('sed -i \'s/|locked|/|active|/g\' /etc/slowdns/users.txt; screen -r -S limiter_daemon -X quit 2>/dev/null; rm -f /etc/slowdns/limiter_autostart /etc/slowdns/limiter_daemon.sh; echo DONE')}
+${SEP}
+`;
+  },
+
+  ssh_add() {
+    breadcrumb.textContent = '📍 SSH USERS › ADD NEW USER';
+    return `
+${dtitle('👤 ADD NEW SSH USER')}
+${SEP}
+
+  ${w('STEP 1:')} USERNAME
+  ${cy('Enter username for new SSH user')}
+  ${g('Example: john_doe')}
+
+  ${w('STEP 2:')} PASSWORD
+  ${cy('Enter password (or leave blank to auto-generate)')}
+
+  ${w('STEP 3:')} DURATION
+  ${cy('  1)')} 1 DAY
+  ${cy('  2)')} 7 DAYS
+  ${cy('  3)')} 30 DAYS ${g('⭐')}
+  ${cy('  4)')} 90 DAYS
+  ${cy('  5)')} 365 DAYS
+
+  ${w('STEP 4:')} DATA LIMIT (GB)
+  ${cy('0 = UNLIMITED')}
+
+  ${w('STEP 5:')} CONNECTION LIMIT (SIMULTANEOUS LOGINS)
+  ${cy('0 = UNLIMITED, or set a number')}
+
+  ${w('STEP 6:')} AUTO-RENEW
+  ${cy('  1)')} DISABLED (MANUAL RENEW)
+  ${cy('  2)')} RENEW 1 DAY BEFORE EXPIRY
+  ${cy('  3)')} RENEW 3 DAYS BEFORE EXPIRY
+  ${cy('  4)')} RENEW 7 DAYS BEFORE EXPIRY
+
+${BOT}
+${bg('           USER CREATED SUCCESSFULLY')}
+${BOT}
+
+  ${w('SERVER IP      :')} ${y('203.0.113.42')}
+  ${w('USER           :')} ${g('john_doe')}
+  ${w('PASSWORD       :')} ${g('Pass@1234')}
+  ${w('DURATION       :')} ${cy('30 DAYS')}
+  ${w('CONN LIMIT     :')} ${cy('UNLIMITED')}
+  ${w('DATA LIMIT     :')} ${cy('UNLIMITED')}
+  ${w('EXPIRY DATE    :')} ${y('2025-08-03')}
+  ${w('PUBLIC KEY     :')} ${cy('a1b2c3d4e5f6...')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK TO SSH MENU]')}</span>
+`;
+  },
+
+  ssh_list() {
+    breadcrumb.textContent = '📍 SSH USERS › LIST ALL USERS';
+    const hdr = `${cy('╔')}${w(' USERNAME   ')}${cy('┬')}${w(' PASSWORD   ')}${cy('┬')}${w(' EXPIRES  ')}${cy('┬')}${w(' DAYS  ')}${cy('┬')}${w(' DATA USED/LIMIT')}${cy('┬')}${w(' STATUS ')}${cy('┬')}${w(' CONN ')}${cy('╗')}`;
+    const div = `${cy('╠════════════╪════════════╪══════════╪═══════╪══════════════╪════════╪════════╣')}`;
+    const row = (u,pw,exp,days,data,st,conn) =>
+      `${cy('║')} ${g(u.padEnd(10))} ${cy('│')} ${w(pw.padEnd(10))} ${cy('│')} ${w(exp)} ${cy('│')} ${days} ${cy('│')} ${data.padEnd(12)} ${cy('│')} ${st.padEnd(6)} ${cy('│')} ${conn.padEnd(4)} ${cy('║')}`;
+    const bot = `${cy('╚════════════╧════════════╧══════════╧═══════╧══════════════╧════════╧════════╝')}`;
+    return `
+${dtitle('📋 SSH USERS LIST')}
+${SEP}
+
+${hdr}
+${div}
+${row('john_doe','Pass@1234','2025-08-03',g(' 29  '),'0.12/∞      ',g('ACTIVE'),g('∞   '))}
+${row('alice','Abc@5678','2025-07-14',y('  9  '),'1.80/5GB    ',g('ACTIVE'),cy('3   '))}
+${row('bob','Xyz@9012','2025-09-01',g(' 58  '),'0.00/∞      ',g('ACTIVE'),g('∞   '))}
+${row('test_usr','Test@111','2025-07-03',r('  0  '),'0.00/∞      ',r('LOCKED'),g('∞   '))}
+${bot}
+
+  ${cy('TOTAL:')} ${w('4')}  |  ${g('ACTIVE: 3')}  |  ${r('EXPIRED/LOCKED: 1')}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_lock() {
+    breadcrumb.textContent = '📍 SSH USERS › LOCK ACCOUNT';
+    return `
+${dtitle('🔒 LOCK SSH ACCOUNT')}
+${SEP}
+
+${y('ACTIVE USERS:')}
+  ${g('→')} john_doe  ${w('(EXPIRES: 2025-08-03)')}
+  ${g('→')} alice     ${w('(EXPIRES: 2025-07-14)')}
+  ${g('→')} bob       ${w('(EXPIRES: 2025-09-01)')}
+
+${w('USERNAME TO LOCK:')} ${cy('alice')}
+
+${BOT}
+${r('USER alice HAS BEEN LOCKED')}
+  ${w('• SSH login disabled immediately')}
+  ${w('• Account preserved in database')}
+  ${w('• Unlock anytime via menu option 5')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_unlock() {
+    breadcrumb.textContent = '📍 SSH USERS › UNLOCK ACCOUNT';
+    return `
+${dtitle('🔓 UNLOCK SSH ACCOUNT')}
+${SEP}
+
+${y('LOCKED USERS:')}
+  ${r('→')} test_usr  ${w('(LOCKED)')}
+  ${r('→')} alice     ${w('(LOCKED)')}
+
+${w('USERNAME TO UNLOCK:')} ${cy('test_usr')}
+
+${BOT}
+${bg('USER test_usr HAS BEEN UNLOCKED')}
+  ${w('• SSH login re-enabled')}
+  ${w('• Expiry date preserved')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_renew() {
+    breadcrumb.textContent = '📍 SSH USERS › RENEW USER';
+    return `
+${dtitle('🔄 RENEW SSH USER')}
+${SEP}
+
+${y('USERS:')}
+  ${g('→')} john_doe  ${w('(EXPIRES: 2025-08-03)')}
+  ${g('→')} alice     ${w('(EXPIRES: 2025-07-14)')}
+  ${g('→')} bob       ${w('(EXPIRES: 2025-09-01)')}
+
+${w('USERNAME TO RENEW:')} ${cy('alice')}
+${w('DURATION:')} ${cy('1)')} 1 DAY  ${cy('2)')} 7 DAYS  ${cy('3)')} 30 DAYS ⭐  ${cy('4)')} 90 DAYS  ${cy('5)')} 365 DAYS
+
+${BOT}
+${bg('USER alice RENEWED SUCCESSFULLY')}
+  ${w('NEW EXPIRY DATE  :')} ${y('2025-08-13')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_banner() {
+    breadcrumb.textContent = '📍 SSH USERS › SSH BANNER';
+    return `
+${dtitle('🖥️  SSH BANNER / SERVER MESSAGE')}
+${SEP}
+
+  ${g('  1)')} ✏️  SET / EDIT BANNER TEXT
+  ${y('  2)')} 🎨 SET DEFAULT BANNER
+  ${r('  3)')} 🗑️  REMOVE BANNER
+  ${w('  0)')} ⬅️  BACK
+
+${SEP}
+${y('CURRENT BANNER PREVIEW:')}
+${BOT}
+${by('  ██████╗ ██╗      █████╗  ██████╗██╗  ██╗')}
+${by('  ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝')}
+${by('  ██████╔╝██║     ███████║██║     █████╔╝ ')}
+  ${w('  ⚠️  AUTHORIZED USERS ONLY')}
+  ${w('  📱 Support: +255658785522')}
+  ${w('  🔐 All connections are logged')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_ar() {
+    breadcrumb.textContent = '📍 SSH USERS › AUTO-RENEW SETTINGS';
+    return `
+${dtitle('♻️  AUTO-RENEW SETTINGS')}
+${SEP}
+
+${w('USERNAME:')} ${cy('john_doe')}
+
+${w('SELECT AUTO-RENEW MODE:')}
+  ${r('  1)')} DISABLE AUTO-RENEW
+  ${cy('  2)')} RENEW 7 DAYS   (TRIGGER: 1 DAY BEFORE)
+  ${cy('  3)')} RENEW 30 DAYS  (TRIGGER: 3 DAYS BEFORE)
+  ${cy('  4)')} RENEW 30 DAYS  (TRIGGER: 7 DAYS BEFORE)
+  ${cy('  5)')} RENEW 90 DAYS  (TRIGGER: 7 DAYS BEFORE)
+  ${cy('  6)')} CUSTOM
+
+${BOT}
+${bg('AUTO-RENEW CONFIGURED')}
+  ${w('USER    :')} ${cy('john_doe')}
+  ${w('MODE    :')} ${cy('RENEW 30 DAYS — trigger 3 days before expiry')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_ar_status() {
+    breadcrumb.textContent = '📍 SSH USERS › AUTO-RENEW STATUS';
+    return `
+${dtitle('📊 AUTO-RENEW STATUS')}
+${SEP}
+
+  USERNAME     EXPIRES       DAYS LEFT   AR MODE            TRIGGER
+  ${g('john_doe')}   ${w('2025-08-03')}    ${g('29 days')}     ${cy('30d auto-renew')}    ${y('3 days before')}
+  ${g('bob')}        ${w('2025-09-01')}    ${g('58 days')}     ${cy('90d auto-renew')}    ${y('7 days before')}
+  ${y('alice')}      ${w('2025-07-14')}    ${r(' 9 days')}     ${r('DISABLED')}           ${r('—')}
+  ${r('test_usr')}   ${w('2025-07-03')}    ${r('LOCKED')}      ${r('DISABLED')}           ${r('—')}
+
+${g('[SUCCESS]')} Auto-renew checked — ${cy('0 renewals triggered today')}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_backup() {
+    breadcrumb.textContent = '📍 SSH USERS › BACKUP & RESTORE';
+    return `
+${dtitle('💾 BACKUP & RESTORE')}
+${SEP}
+
+  ${g('  1)')} 💾 CREATE BACKUP NOW
+  ${y('  2)')} 📥 RESTORE FROM BACKUP
+  ${r('  3)')} 🗑️  MANAGE / DELETE BACKUPS
+  ${w('  0)')} ⬅️  BACK
+
+${SEP}
+${y('EXISTING BACKUPS:')}
+  ${cy('backup_2025-07-01_10-22.tar.gz')}  ${w('(4 users)')}
+  ${cy('backup_2025-07-03_08-15.tar.gz')}  ${w('(4 users)')}
+  ${cy('backup_2025-07-04_09-00.tar.gz')}  ${w('(4 users)')} ${g('← LATEST')}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_del() {
+    breadcrumb.textContent = '📍 SSH USERS › DELETE USER';
+    return `
+${dtitle('🗑️  DELETE SSH USER')}
+${SEP}
+
+${y('ALL USERS:')}
+  ${g('→')} john_doe  ${w('ACTIVE  | EXPIRES: 2025-08-03')}
+  ${g('→')} alice     ${w('LOCKED  | EXPIRES: 2025-07-14')}
+  ${g('→')} bob       ${w('ACTIVE  | EXPIRES: 2025-09-01')}
+  ${g('→')} test_usr  ${w('LOCKED  | EXPIRES: 2025-07-03')}
+
+${w('USERNAME TO DELETE:')} ${r('test_usr')}
+
+${r('⚠️  TYPE "yes" TO CONFIRM PERMANENT DELETION')}
+  ${r('• System user deleted')}
+  ${r('• All data wiped')}
+  ${r('• Cannot be undone')}
+
+${BOT}
+${r('USER test_usr DELETED PERMANENTLY')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  system() {
+    breadcrumb.textContent = '📍 MAIN MENU › 🖥️  SYSTEM TOOLS';
+    return banner() + `
+${dtitle('🖥️  SYSTEM TOOLS')}
+${SEP}
+
+  ${mi(cy(' 1)'), '  📊 VPS INFO PANEL',          'sys_vps')}
+  ${mi(g('  2)'), '  ⚙️  SERVER OPTIMIZER',         'sys_opt')}
+  ${mi(y('  3)'), '  👁️  SSH CONNECTION MONITOR',   'sys_mon')}
+  ${mi(r('  4)'), '  🧹 EXPIRED USERS CLEANER',    'sys_clean')}
+  ${mi(b('  5)'), '  🔄 SCRIPT AUTO-UPDATER',       'sys_update')}
+  ${mi(w('  0)'), '  ⬅️  BACK',                     'main')}
+
+`;
+  },
+
+  sys_vps() {
+    breadcrumb.textContent = '📍 SYSTEM TOOLS › VPS INFO';
+    return `
+${dtitle('📊 VPS INFO PANEL')}
+${SEP}
+
+${BOT}
+  ${w('HOSTNAME       :')} ${cy('vps-bk-prod')}
+  ${w('OS             :')} ${cy('Ubuntu 22.04.3 LTS')}
+  ${w('KERNEL         :')} ${cy('5.15.0-78-generic')}
+  ${w('UPTIME         :')} ${cy('14 days 6 hours 22 min')}
+  ${w('CPU            :')} ${cy('2 vCPU @ 2.4GHz')}
+  ${w('CPU USAGE      :')} ${g('12%')}
+  ${w('RAM TOTAL      :')} ${cy('2.0 GB')}
+  ${w('RAM USED       :')} ${g('412 MB (20%)')}
+  ${w('DISK TOTAL     :')} ${cy('40 GB')}
+  ${w('DISK USED      :')} ${g('4.2 GB (10%)')}
+  ${w('PUBLIC IP      :')} ${y('203.0.113.42')}
+  ${w('SSH PORT       :')} ${cy('22')}
+  ${w('DNSTT PORT     :')} ${cy('5300/UDP')}
+  ${w('DNSTT STATUS   :')} ${g('● RUNNING')}
+  ${w('ACTIVE CONNS   :')} ${cy('3')}
+${BOT}
+
+<span class="menu-item" onclick="choose('system')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  sys_opt() {
+    breadcrumb.textContent = '📍 SYSTEM TOOLS › SERVER OPTIMIZER';
+    return `
+${dtitle('⚙️  SERVER OPTIMIZER')}
+${SEP}
+
+  ${g('  1)')} 📦 UPDATE PACKAGES (apt update/upgrade)
+  ${cy('  2)')} 🧹 CLEAN RAM CACHE (FREE MEMORY)
+  ${y('  3)')} 🗑️  REMOVE UNUSED PACKAGES (autoremove/autoclean)
+  ${p('  4)')} ⚡ FULL OPTIMIZE (ALL AT ONCE)
+  ${w('  0)')} ⬅️  BACK
+
+${SEP}
+${y('CURRENT STATE:')}
+  ${w('RAM FREE    :')} ${g('1.6 GB / 2.0 GB')}
+  ${w('SWAP        :')} ${cy('0 MB used / 1.0 GB')}
+  ${w('LOAD AVG    :')} ${g('0.12, 0.08, 0.05')}
+
+<span class="menu-item" onclick="choose('system')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  sys_mon() {
+    breadcrumb.textContent = '📍 SYSTEM TOOLS › SSH CONNECTION MONITOR';
+    return `
+${dtitle('👁️  ACTIVE SSH CONNECTIONS — REAL-TIME MONITOR')}
+${SEP}
+
+  ${w('USER        IP              PORT    CONNECTED    PROCESS')}
+  ${g('john_doe')}    103.21.x.x      49122   2h 14m 33s   ${cy('sshd')}
+  ${g('alice')}       41.90.x.x       52841   44m 12s      ${cy('sshd')}
+  ${g('bob')}         196.3.x.x       61034   11m 58s      ${cy('sshd')}
+
+  ${w('TOTAL ACTIVE:')} ${cy('3')}  |  ${w('LISTENING ON PORT:')} ${cy('22')}
+
+${y('Press Ctrl+C to stop real-time monitoring')}
+${cy('Refreshing every 2 seconds...')} ${c('blink','█')}
+
+<span class="menu-item" onclick="choose('system')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  sys_clean() {
+    breadcrumb.textContent = '📍 SYSTEM TOOLS › EXPIRED USERS CLEANER';
+    return `
+${dtitle('🧹 EXPIRED USERS CLEANER')}
+${SEP}
+
+${y('SCANNING FOR EXPIRED USERS...')}
+
+  ${r('→ test_usr')}  ${w('EXPIRED: 2025-07-03')}  ${r('(1 day ago)')}
+
+  ${w('TOTAL EXPIRED:')} ${r('1')}
+
+  ${r('  1)')} DELETE ALL EXPIRED USERS NOW
+  ${y('  2)')} LOCK ALL EXPIRED USERS (KEEP ACCOUNTS)
+  ${w('  0)')} CANCEL — GO BACK
+
+${BOT}
+${r('USER test_usr DELETED')}
+  ${w('System user removed. Database cleaned.')}
+${BOT}
+
+<span class="menu-item" onclick="choose('system')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  sys_update() {
+    breadcrumb.textContent = '📍 SYSTEM TOOLS › AUTO-UPDATER';
+    return `
+${dtitle('🔄 SCRIPT AUTO-UPDATER')}
+${SEP}
+
+  ${w('CURRENT VERSION :')} ${y('v9.2.3')}
+  ${w('CHECKING LATEST :')} ${cy('https://github.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-')}
+
+${cy('[............................] CHECKING...')}
+
+  ${w('LATEST VERSION  :')} ${g('v9.2.3')}
+
+${BOT}
+${g('✓ YOU ARE RUNNING THE LATEST VERSION')}
+  No update needed.
+${BOT}
+
+<span class="menu-item" onclick="choose('system')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  exit() {
+    breadcrumb.textContent = '👋 GOODBYE';
+    return `
+${BOT}
+${bg('   THANK YOU FOR USING BLACK KILLER SSH TUNNEL MANAGER! 👑')}
+${w('   📱 WhatsApp: +255658785522')}
+${BOT}
+
+<span class="menu-item" onclick="choose('main')">${g('  [↩ RESTART MENU]')}</span>
+`;
+  }
+};
+
+// fallback for unimplemented screens
+function fallback(key) {
+  return `
+${dtitle('🔧 ' + key.toUpperCase())}
+${SEP}
+
+  ${y('This sub-menu is available on a real VPS server.')}
+  ${w('All functionality works when the script is installed via:')}
+
+  ${cy('bash <(curl -s https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh)')}
+
+<span class="menu-item" onclick="choose('main')">${w('  [← MAIN MENU]')}</span>
+`;
+}
+
+let current = 'main';
+
+function render(key) {
+  current = key;
+  const fn = SCREENS[key];
+  screen.innerHTML = fn ? fn() : fallback(key);
+  screen.scrollTop = 0;
+  input.value = '';
+  input.focus();
+}
+
+function choose(key) {
+  render(key);
+}
+
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const val = input.value.trim();
+  if (!val) return;
+
+  // Map numeric inputs to actions based on current screen
+  const maps = {
+    main:   {'1':'dnstt','2':'ssh','3':'system','0':'exit'},
+    dnstt:  {'1':'dnstt_install','2':'dnstt_status','3':'dnstt_info','4':'dnstt_logs',
+              '5':'dnstt_perf','6':'dnstt_stats','7':'dnstt_bw','8':'dnstt_fix',
+              '9':'dnstt_ts','10':'dnstt_restart','11':'dnstt_bkp','12':'dnstt_rst',
+              '13':'dnstt_stop','14':'dnstt_uninstall','0':'main'},
+    ssh:    {'1':'ssh_add','2':'ssh_list','3':'ssh_renew','4':'ssh_lock','5':'ssh_unlock',
+              '6':'ssh_banner','7':'ssh_ar','8':'ssh_ar_status','9':'ssh_backup','10':'ssh_del','0':'main'},
+    system: {'1':'sys_vps','2':'sys_opt','3':'sys_mon','4':'sys_clean','5':'sys_update','0':'main'},
+  };
+
+  const map = maps[current] || {};
+  const next = map[val] || val;
+  if (SCREENS[next] || Object.values(maps).some(m => Object.values(m).includes(next))) {
+    render(next);
+  } else {
+    render(current); // invalid choice — redraw
+  }
+});
+
+// boot
+render('main');
+input.focus();
+</script>
+</body>
+</html>
