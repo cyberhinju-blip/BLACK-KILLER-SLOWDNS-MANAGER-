@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.4"
+SCRIPT_VERSION="9.2.5"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -2786,7 +2786,7 @@ main_menu() {
         echo -e "  ${RED}0)${NC}  ⛔ EXIT"
         echo ""
         dsep
-        echo -e "  ${WHITE}VERSION: 9.2.3 ULTRA DIAMOND | ${BRED}CREATED BY BLACK KILLER${NC}"
+        echo -e "  ${WHITE}VERSION: ${SCRIPT_VERSION} ULTRA DIAMOND | ${BRED}CREATED BY BLACK KILLER${NC}"
         echo -e "  ${WHITE}📱 WhatsApp: +255658785522${NC}"
         dsep
         echo ""
@@ -2844,4 +2844,13 @@ rm -f /etc/slowdns/limiter_autostart /etc/slowdns/limiter_daemon.sh 2>/dev/null 
 check_root
 check_bash_version
 check_os
+
+# Auto-fix: if the installed profile.d script pre-dates the function-wrapper
+# fix (v9.2.4), regenerate it silently so returning users are fixed on the
+# first run of the new script without any manual menu action.
+if [[ -f /etc/profile.d/slowdns_info.sh ]] && \
+   ! grep -q '_bk_motd' /etc/profile.d/slowdns_info.sh 2>/dev/null; then
+    update_motd_script 2>/dev/null || true
+fi
+
 main_menu
