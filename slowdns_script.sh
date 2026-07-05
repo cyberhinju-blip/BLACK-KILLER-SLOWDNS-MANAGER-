@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.7"
+SCRIPT_VERSION="9.2.8"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -1407,16 +1407,21 @@ exit 0
 PAM_BANNER_EOF
     chmod 755 "$banner_script"
 
-    # Hook into PAM — remove any stale entry first, then append once.
-    if [[ -f "$pam_sshd" ]]; then
-        sed -i '/pam_exec.*user_banner/d' "$pam_sshd"
-        echo "session optional pam_exec.so stdout /etc/ssh/user_banner.sh" >> "$pam_sshd"
-    fi
+    # Hook into PAM for OpenSSH and Dropbear (if present).
+    # Remove stale entries first, then append exactly one line each.
+    local pam_line="session optional pam_exec.so stdout /etc/ssh/user_banner.sh"
+    for pam_file in /etc/pam.d/sshd /etc/pam.d/dropbear; do
+        [[ -f "$pam_file" ]] || continue
+        sed -i '/pam_exec.*user_banner/d' "$pam_file"
+        echo "$pam_line" >> "$pam_file"
+    done
 }
 
 remove_pam_banner() {
     rm -f /etc/ssh/user_banner.sh 2>/dev/null || true
-    [[ -f /etc/pam.d/sshd ]] && sed -i '/pam_exec.*user_banner/d' /etc/pam.d/sshd 2>/dev/null || true
+    for pam_file in /etc/pam.d/sshd /etc/pam.d/dropbear; do
+        [[ -f "$pam_file" ]] && sed -i '/pam_exec.*user_banner/d' "$pam_file" 2>/dev/null || true
+    done
 }
 
 #============================================================
@@ -1601,6 +1606,8 @@ BANNER_EOF
                 if [[ "$confirm" == "yes" ]]; then
                     rm -f "$BANNER_FILE"
                     sed -i '/^Banner /d; /^#Banner /d' /etc/ssh/sshd_config 2>/dev/null
+                    _remove_dropbear_banner
+                    remove_pam_banner
                     ensure_ssh_alive
                     log_success "BANNER REMOVED"
                 fi
@@ -1615,32 +1622,72 @@ BANNER_EOF
 _apply_banner_config() {
     local sshd_cfg="/etc/ssh/sshd_config"
 
-    # Step 1: Remove ALL existing Banner directives (active and commented) to start clean
+    # ── OpenSSH ──────────────────────────────────────────────
+    # Step 1: Remove ALL existing Banner directives to start clean
     sed -i '/^Banner /d; /^#Banner /d' "$sshd_cfg" 2>/dev/null || true
 
-    # Step 2: Append exactly ONE Banner directive — no duplicates possible
+    # Step 2: Append exactly ONE Banner directive
     echo "Banner $BANNER_FILE" >> "$sshd_cfg"
 
-    # Step 3: Ensure PrintMotd yes (for post-login MOTD display)
-    if grep -q "^PrintMotd" "$sshd_cfg" 2>/dev/null; then
-        sed -i 's|^PrintMotd.*|PrintMotd yes|' "$sshd_cfg"
-    else
-        echo "PrintMotd yes" >> "$sshd_cfg"
-    fi
-
-    # Step 4: Validate config before touching the running service
+    # Step 3: Validate config before restarting
     if ! sshd -t 2>/dev/null; then
-        log_error "BANNER CONFIG FAILED SSHD SYNTAX CHECK — REVERTING BANNER"
+        log_error "BANNER CONFIG FAILED SSHD SYNTAX CHECK — REVERTING"
         sed -i '/^Banner /d' "$sshd_cfg" 2>/dev/null
         return 1
     fi
 
-    # Step 5: Restart (not reload) so sshd re-reads banner path for new connections
+    # Step 4: Restart sshd
     systemctl restart sshd 2>/dev/null || \
         systemctl restart ssh  2>/dev/null || \
         service ssh restart    2>/dev/null || true
 
-    log_success "SSH BANNER ACTIVE — WILL SHOW ON NEXT CONNECTION"
+    # ── Dropbear ─────────────────────────────────────────────
+    # Dropbear uses -b flag in DROPBEAR_EXTRA_ARGS inside /etc/default/dropbear.
+    # We inject/update the -b flag without touching any -p port flags already set.
+    _apply_dropbear_banner
+
+    log_success "SSH BANNER ACTIVE (OpenSSH + Dropbear) — WILL SHOW ON NEXT CONNECTION"
+}
+
+# Configure Dropbear to use the same banner file as OpenSSH.
+_apply_dropbear_banner() {
+    local db_default="/etc/default/dropbear"
+    [[ ! -f "$db_default" ]] && return 0   # Dropbear not installed — nothing to do
+
+    # Read current DROPBEAR_EXTRA_ARGS (strip surrounding quotes)
+    local current_args
+    current_args=$(grep -oP '^DROPBEAR_EXTRA_ARGS=["'"'"']?\K[^"'"'"']+' "$db_default" 2>/dev/null || echo "")
+
+    # Remove any existing -b flag and its argument
+    local new_args
+    new_args=$(echo "$current_args" | sed -E 's/-b\s+\S+//g' | tr -s ' ' | sed 's/^ //; s/ $//')
+
+    # Append our banner flag
+    new_args="${new_args} -b ${BANNER_FILE}"
+    new_args=$(echo "$new_args" | tr -s ' ' | sed 's/^ //')
+
+    # Write back — replace or add the line
+    if grep -q '^DROPBEAR_EXTRA_ARGS' "$db_default" 2>/dev/null; then
+        sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"${new_args}\"|" "$db_default"
+    else
+        echo "DROPBEAR_EXTRA_ARGS=\"${new_args}\"" >> "$db_default"
+    fi
+
+    systemctl restart dropbear 2>/dev/null || \
+        service dropbear restart 2>/dev/null || true
+}
+
+# Remove Dropbear banner flag from /etc/default/dropbear.
+_remove_dropbear_banner() {
+    local db_default="/etc/default/dropbear"
+    [[ ! -f "$db_default" ]] && return 0
+    local current_args
+    current_args=$(grep -oP '^DROPBEAR_EXTRA_ARGS=["'"'"']?\K[^"'"'"']+' "$db_default" 2>/dev/null || echo "")
+    local new_args
+    new_args=$(echo "$current_args" | sed -E 's/-b\s+\S+//g' | tr -s ' ' | sed 's/^ //; s/ $//')
+    sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"${new_args}\"|" "$db_default"
+    systemctl restart dropbear 2>/dev/null || \
+        service dropbear restart 2>/dev/null || true
 }
 
 #============================================================
