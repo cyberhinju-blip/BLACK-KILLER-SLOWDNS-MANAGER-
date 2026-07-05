@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.9"
+SCRIPT_VERSION="9.3.0"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -3159,10 +3159,11 @@ check_root
 check_bash_version
 check_os
 
-# Auto-fix on startup: regenerate if profile.d is missing or pre-dates the
-# function-wrapper fix (lacks _bk_motd) so servers fix themselves on first run.
-if [[ -f /etc/profile.d/slowdns_info.sh ]] && \
-   ! grep -q '_bk_motd' /etc/profile.d/slowdns_info.sh 2>/dev/null; then
+# Auto-fix on startup: regenerate profile.d if it is missing OR does not yet
+# use the while/break pattern (covers both the very-old top-level-return version
+# AND the intermediate _bk_motd() function-wrapper version).
+if [[ ! -f /etc/profile.d/slowdns_info.sh ]] || \
+   ! grep -q 'while true' /etc/profile.d/slowdns_info.sh 2>/dev/null; then
     update_motd_script 2>/dev/null || true
 fi
 

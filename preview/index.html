@@ -176,7 +176,7 @@ const SCREENS = {
     breadcrumb.textContent = '📍 MAIN MENU';
     return banner() + `
 ${SEP}
-  ${w('VERSION: 9.2.3 ULTRA DIAMOND |')} ${br('CREATED BY BLACK KILLER')}
+  ${w('VERSION: 9.3.0 ULTRA DIAMOND |')} ${br('CREATED BY BLACK KILLER')}
 ${SEP}
 
   ${mi(g('  1)'), '  🌐 DNSTT MANAGEMENT',   'dnstt')}
@@ -342,6 +342,7 @@ ${SEP}
   ${mi(cy(' 8)'), '  📊 AUTO-RENEW STATUS',       'ssh_ar_status')}
   ${mi(y('  9)'), '  💾 BACKUP & RESTORE',        'ssh_backup')}
   ${mi(r(' 10)'), '  🗑️  DELETE USER',             'ssh_del')}
+  ${mi(w(' 11)'), '  ✏️  EDIT USER',               'ssh_edit')}
   ${mi(w('  0)'), '  ⬅️  BACK',                   'main')}
 
 ${SEP}
@@ -492,6 +493,41 @@ ${bg('USER alice RENEWED SUCCESSFULLY')}
 ${BOT}
 
 <span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
+`;
+  },
+
+  ssh_edit() {
+    breadcrumb.textContent = '📍 SSH USERS › ✏️  EDIT USER';
+    return `
+${dtitle('✏️  EDIT SSH USER')}
+${SEP}
+
+${y('ALL USERS:')}
+  ${g('→')} john_doe  ${w('ACTIVE  | EXPIRES: 2026-08-03')}
+  ${g('→')} alice     ${w('ACTIVE  | EXPIRES: 2026-07-14')}
+  ${g('→')} bob       ${w('ACTIVE  | EXPIRES: 2026-09-01')}
+
+${w('USERNAME TO EDIT:')} ${cy('alice')}
+
+${SEP}
+  ${cy('  1)')} 🔑 CHANGE PASSWORD
+  ${cy('  2)')} 📊 CHANGE DATA LIMIT (GB)
+  ${cy('  3)')} 🔗 CHANGE CONNECTION LIMIT
+  ${cy('  4)')} 📅 CHANGE EXPIRY DATE
+  ${w('  0)')} ⬅️  BACK
+${SEP}
+
+${w('CHOICE:')} ${cy('2')}  ${w('NEW DATA LIMIT (GB, 0=UNLIMITED):')} ${cy('50')}
+
+${BOT}
+${bg('USER alice UPDATED SUCCESSFULLY')}
+  ${w('DATA LIMIT   :')} ${cy('50 GB')}
+  ${w('CONN LIMIT   :')} ${cy('(unchanged)')}
+  ${w('PASSWORD     :')} ${cy('(unchanged)')}
+  ${w('EXPIRY       :')} ${cy('(unchanged)')}
+${BOT}
+
+<span class="menu-item" onclick="choose('ssh')">${w('  [← BACK TO SSH MENU]')}</span>
 `;
   },
 
