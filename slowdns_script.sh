@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.8"
+SCRIPT_VERSION="9.2.9"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -1051,9 +1051,8 @@ add_ssh_user() {
     if [[ -n "$new_home" && -d "$new_home" ]]; then
         local new_bp="${new_home}/.bash_profile"
         touch "$new_bp" 2>/dev/null
-        if ! grep -q 'slowdns_info' "$new_bp" 2>/dev/null; then
-            printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$new_bp"
-        fi
+        sed -i '/slowdns_info\|BLACK KILLER MOTD\|pam_exec.*user_banner/d' "$new_bp" 2>/dev/null
+        printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$new_bp"
     fi
 
     PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "YOUR_SERVER_IP")
@@ -1201,7 +1200,8 @@ setup_user_quota() {
 get_user_usage_gb() {
     local username="$1"
     local bytes=0 raw saved total
-    raw=$(iptables -L "slowdns_$username" -xvn 2>/dev/null | awk 'NR==3{print $2}')
+    # Read bytes from OUTPUT chain jump rule (not inside the chain — it's empty)
+    raw=$(iptables -L OUTPUT -xvn 2>/dev/null | awk -v chain="slowdns_${username}" '$NF==chain{print $2}')
     [[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
     saved=0
     [[ -f "$USAGE_DIR/$username" ]] && saved=$(cat "$USAGE_DIR/$username" 2>/dev/null)
@@ -1252,15 +1252,20 @@ _bk_motd() {
     exp_unix=$(date -d "$exp" +%s 2>/dev/null || echo 0)
     days_left=$(( (exp_unix - current) / 86400 ))
     local bytes=0 raw saved=0 total usage_gb
-    raw=$(iptables -L "slowdns_${me}" -xvn 2>/dev/null | awk 'NR==3{print $2}')
+    # Bytes live on the OUTPUT jump rule, not inside the (empty) per-user chain
+    raw=$(iptables -L OUTPUT -xvn 2>/dev/null | awk -v chain="slowdns_${me}" '$NF==chain{print $2}')
     [[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
     [[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
     [[ "$saved" =~ ^[0-9]+$ ]] || saved=0
     total=$(( bytes + saved ))
     usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
-    local active_conns
+    local active_conns uid
     active_conns=$(who 2>/dev/null | awk -v u="$me" '$1==u{c++}END{print c+0}')
-    [[ ! "$active_conns" =~ ^[0-9]+$ ]] && active_conns=1
+    if [[ ! "$active_conns" =~ ^[0-9]+$ || "$active_conns" -eq 0 ]]; then
+        uid=$(id -u 2>/dev/null)
+        [[ -n "$uid" ]] && active_conns=$(cat /proc/*/loginuid 2>/dev/null | grep -c "^${uid}$" 2>/dev/null || echo 0)
+    fi
+    [[ ! "$active_conns" =~ ^[0-9]+$ || "$active_conns" -eq 0 ]] && active_conns=1
     echo ""
     echo -e "${BRED}╔═══════════════════════════════════════════════════════╗${NC}"
     echo -e "${BRED}║  ☠  BLACK KILLER — SSH TUNNEL MANAGER v9.0 ULTRA  ☠  ║${NC}"
@@ -1304,11 +1309,11 @@ MOTD_EOF
         home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
         [[ -z "$home_dir" || ! -d "$home_dir" ]] && continue
         bp="${home_dir}/.bash_profile"
-        # Create file if it doesn't exist, then append only if our line isn't there
         touch "$bp" 2>/dev/null
-        if ! grep -q 'slowdns_info' "$bp" 2>/dev/null; then
-            printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$bp"
-        fi
+        # Always clean any old/contaminated entries (PAM lines, old script content)
+        # then write one fresh MOTD call — prevents the "PAM line inside bash_profile" bug
+        sed -i '/slowdns_info\|BLACK KILLER MOTD\|pam_exec.*user_banner/d' "$bp" 2>/dev/null
+        printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$bp"
     done < "$USER_DB"
 
     # Set up the PAM-based dynamic banner as the primary display mechanism.
@@ -1353,9 +1358,9 @@ secs_left=$(( exp_unix - current ))
 days_left=$(( secs_left / 86400 ))
 hours_left=$(( (secs_left % 86400) / 3600 ))
 
-# Data usage: live iptables counter + saved archive (runs as root via pam_exec)
+# Data usage: bytes live on OUTPUT jump rule (per-user chain itself is empty)
 bytes=0
-raw=$(iptables -L "slowdns_${me}" -xvn 2>/dev/null | awk 'NR==3{print $2}')
+raw=$(iptables -L OUTPUT -xvn 2>/dev/null | awk -v chain="slowdns_${me}" '$NF==chain{print $2}')
 [[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
 saved=0
 [[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
@@ -1363,10 +1368,13 @@ saved=0
 total=$(( bytes + saved ))
 usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
 
-# Active sessions (who shows logged-in users; add 1 for current connecting session)
+# Active sessions: who covers PTY logins; /proc loginuid covers tunnel sessions
 active_conns=$(who 2>/dev/null | awk -v u="$me" '$1==u{c++}END{print c+0}')
-[[ ! "$active_conns" =~ ^[0-9]+$ ]] && active_conns=0
-active_conns=$(( active_conns + 1 ))
+if [[ ! "$active_conns" =~ ^[0-9]+$ || "$active_conns" -eq 0 ]]; then
+    uid=$(id -u "$me" 2>/dev/null || echo "")
+    [[ -n "$uid" ]] && active_conns=$(cat /proc/*/loginuid 2>/dev/null | grep -c "^${uid}$" 2>/dev/null || echo 0)
+fi
+active_conns=$(( ${active_conns:-0} + 1 ))
 
 BRED='\033[1;31m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'
 YELLOW='\033[1;33m'; RED='\033[0;31m'; WHITE='\033[1;37m'; NC='\033[0m'
@@ -1421,6 +1429,93 @@ remove_pam_banner() {
     rm -f /etc/ssh/user_banner.sh 2>/dev/null || true
     for pam_file in /etc/pam.d/sshd /etc/pam.d/dropbear; do
         [[ -f "$pam_file" ]] && sed -i '/pam_exec.*user_banner/d' "$pam_file" 2>/dev/null || true
+    done
+}
+
+#============================================================
+# EDIT USER — change password / conn limit / data limit
+#============================================================
+edit_ssh_user() {
+    show_banner
+    dtitle "✏️  EDIT SSH USER"
+    dsep
+    echo ""
+
+    [[ ! -s "$USER_DB" ]] && { log_error "NO USERS FOUND"; press_enter; return; }
+
+    # Show user list
+    list_ssh_users
+    echo ""
+    read -rp "ENTER USERNAME TO EDIT (0=cancel): " target
+    [[ "$target" == "0" || -z "$target" ]] && return
+
+    local user_line
+    user_line=$(awk -F'|' -v u="$target" '$1==u{print; exit}' "$USER_DB" 2>/dev/null)
+    if [[ -z "$user_line" ]]; then
+        log_error "USER '$target' NOT FOUND"
+        press_enter; return
+    fi
+
+    local u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit
+    IFS='|' read -r u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit <<< "$user_line"
+    gb_limit=${gb_limit:-0}; conn_limit=${conn_limit:-0}
+
+    while true; do
+        show_banner
+        dtitle "✏️  EDITING: $target"
+        dsep
+        echo ""
+        echo -e "  ${WHITE}CURRENT VALUES:${NC}"
+        echo -e "  ${CYAN}PASSWORD   :${NC} ${GREEN}$pass${NC}"
+        echo -e "  ${CYAN}EXPIRY     :${NC} ${YELLOW}$exp${NC}"
+        echo -e "  ${CYAN}DATA LIMIT :${NC} ${YELLOW}$([ "$gb_limit" -eq 0 ] && echo UNLIMITED || echo "${gb_limit} GB")${NC}"
+        echo -e "  ${CYAN}CONN LIMIT :${NC} ${YELLOW}$([ "$conn_limit" -eq 0 ] && echo UNLIMITED || echo "$conn_limit")${NC}"
+        echo ""
+        dsep
+        echo -e "  ${GREEN}1)${NC}  🔑 CHANGE PASSWORD"
+        echo -e "  ${CYAN}2)${NC}  📊 CHANGE DATA LIMIT (GB)"
+        echo -e "  ${YELLOW}3)${NC}  🔗 CHANGE CONNECTION LIMIT"
+        echo -e "  ${WHITE}0)${NC}  ⬅️  BACK"
+        echo ""
+        read -rp "CHOICE: " edit_choice
+
+        case $edit_choice in
+            1)
+                read -rp "NEW PASSWORD (leave blank to auto-generate): " new_pass
+                if [[ -z "$new_pass" ]]; then
+                    new_pass=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 10)
+                fi
+                echo "$target:$new_pass" | chpasswd 2>/dev/null
+                awk -F'|' -v OFS='|' -v u="$target" -v v="$new_pass" \
+                    '$1==u{$2=v}{print}' "$USER_DB" > "${USER_DB}.tmp" && \
+                    mv "${USER_DB}.tmp" "$USER_DB"
+                pass="$new_pass"
+                log_success "PASSWORD UPDATED → $new_pass"
+                press_enter
+                ;;
+            2)
+                read -rp "NEW DATA LIMIT IN GB (0=unlimited): " new_gb
+                [[ ! "$new_gb" =~ ^[0-9]+$ ]] && { log_error "INVALID NUMBER"; sleep 1; continue; }
+                awk -F'|' -v OFS='|' -v u="$target" -v v="$new_gb" \
+                    '$1==u{$5=v}{print}' "$USER_DB" > "${USER_DB}.tmp" && \
+                    mv "${USER_DB}.tmp" "$USER_DB"
+                gb_limit="$new_gb"
+                log_success "DATA LIMIT UPDATED → $([ "$new_gb" -eq 0 ] && echo UNLIMITED || echo "${new_gb} GB")"
+                press_enter
+                ;;
+            3)
+                read -rp "NEW CONNECTION LIMIT (0=unlimited): " new_cl
+                [[ ! "$new_cl" =~ ^[0-9]+$ ]] && { log_error "INVALID NUMBER"; sleep 1; continue; }
+                awk -F'|' -v OFS='|' -v u="$target" -v v="$new_cl" \
+                    '$1==u{$9=v}{print}' "$USER_DB" > "${USER_DB}.tmp" && \
+                    mv "${USER_DB}.tmp" "$USER_DB"
+                conn_limit="$new_cl"
+                log_success "CONNECTION LIMIT UPDATED → $([ "$new_cl" -eq 0 ] && echo UNLIMITED || echo "$new_cl")"
+                press_enter
+                ;;
+            0) return ;;
+            *) log_error "INVALID CHOICE"; sleep 1 ;;
+        esac
     done
 }
 
@@ -2912,6 +3007,7 @@ ssh_menu() {
         echo -e "  ${CYAN}8)${NC}  📊 AUTO-RENEW STATUS"
         echo -e "  ${YELLOW}9)${NC}  💾 BACKUP & RESTORE"
         echo -e "  ${RED}10)${NC} 🗑️  DELETE USER"
+        echo -e "  ${WHITE}11)${NC} ✏️  EDIT USER"
         echo -e "  ${WHITE}0)${NC}  ⬅️  BACK"
         echo ""
         dsep
@@ -2932,6 +3028,7 @@ ssh_menu() {
             8)  view_auto_renew_status ;;
             9)  manage_backup_restore ;;
             10) delete_ssh_user ;;
+            11) edit_ssh_user ;;
             0)  return ;;
             *)  log_error "INVALID CHOICE"; sleep 1 ;;
         esac
