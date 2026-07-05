@@ -11,9 +11,9 @@
 
 # BLACK KILLER SSH TUNNEL MANAGER
 
-### ⚡ DNSTT Ultra Speed Edition — v9.2.3
+### ⚡ DNSTT Ultra Speed Edition — v9.3.0
 
-[![Version](https://img.shields.io/badge/Version-9.2.3-red?style=for-the-badge)](https://github.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-)
+[![Version](https://img.shields.io/badge/Version-9.3.0-red?style=for-the-badge)](https://github.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-)
 [![Shell](https://img.shields.io/badge/Shell-Bash-green?style=for-the-badge&logo=gnu-bash)](https://github.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-+255658785522-25D366?style=for-the-badge&logo=whatsapp)](https://wa.me/255658785522)
@@ -60,7 +60,7 @@ NS Record:   t.yourdomain.com   →  ns.yourdomain.com
 
 ```
 ◇────────────────────────────────────────────────────────◇
-  VERSION: 9.2.3 ULTRA DIAMOND | CREATED BY BLACK KILLER
+  VERSION: 9.3.0 ULTRA DIAMOND | CREATED BY BLACK KILLER
 ◇────────────────────────────────────────────────────────◇
 
   1)  🌐 DNSTT MANAGEMENT
@@ -215,6 +215,7 @@ wget -O /usr/local/bin/menu https://raw.githubusercontent.com/cyberhinju-blip/BL
 
 | Version | Changes |
 |---------|---------|
+| v9.3.0 | Fixed VPN `return` error for all DNSTT clients (HTTP Injector, HTTP Custom, Tunnel Tweak, SCC Custom); dynamic SSH banner (username, expiry, data usage, active sessions); auto-regenerate MOTD on startup; `--fix-motd` flag; Edit User (option 11); PAM banner via `pam_exec` + `update-motd.d` |
 | v9.2.3 | Upgraded SSH optimization block: MaxSessions/MaxStartups/RekeyLimit/ClientAlive/PrintMotd |
 | v9.2.2 | Restored conn_limit prompt; clean sshd conflict |
 | v9.2.1 | Fixed kick-out bug — `exit`→`return` in `/etc/profile.d` MOTD script |
