@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.6"
+SCRIPT_VERSION="9.2.7"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -1310,6 +1310,113 @@ MOTD_EOF
             printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$bp"
         fi
     done < "$USER_DB"
+
+    # Set up the PAM-based dynamic banner as the primary display mechanism.
+    setup_pam_banner
+}
+
+#============================================================
+# PAM DYNAMIC USER BANNER
+# Hooked into /etc/pam.d/sshd via pam_exec so it fires for
+# every interactive SSH session — login shells, non-login
+# shells, and VPN tunnel sessions that request a PTY.
+# Pure non-interactive tunnels (ssh -N) have no TTY so we
+# skip them to avoid corrupting the data stream.
+#============================================================
+setup_pam_banner() {
+    local banner_script="/etc/ssh/user_banner.sh"
+    local pam_sshd="/etc/pam.d/sshd"
+
+    cat > "$banner_script" << 'PAM_BANNER_EOF'
+#!/bin/bash
+# /etc/ssh/user_banner.sh — dynamic per-user banner via pam_exec
+# Called by PAM on session open. Skips non-interactive sessions
+# (SCP, SFTP, pure -N tunnels) to avoid corrupting data streams.
+
+[[ "$PAM_TYPE" != "open_session" ]] && exit 0
+[[ -z "$SSH_TTY" ]] && exit 0   # No PTY = non-interactive, skip
+
+USER_DB="/etc/slowdns/users.txt"
+USAGE_DIR="/etc/slowdns/usage"
+me="${PAM_USER:-$(whoami)}"
+
+[[ ! -f "$USER_DB" ]] && exit 0
+user_line=$(awk -F'|' -v u="$me" '$1==u{print; exit}' "$USER_DB" 2>/dev/null)
+[[ -z "$user_line" ]] && exit 0
+
+IFS='|' read -r u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit <<< "$user_line"
+gb_limit=${gb_limit:-0}; acc_status=${acc_status:-active}; conn_limit=${conn_limit:-0}
+
+current=$(date +%s)
+exp_unix=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+secs_left=$(( exp_unix - current ))
+days_left=$(( secs_left / 86400 ))
+hours_left=$(( (secs_left % 86400) / 3600 ))
+
+# Data usage: live iptables counter + saved archive (runs as root via pam_exec)
+bytes=0
+raw=$(iptables -L "slowdns_${me}" -xvn 2>/dev/null | awk 'NR==3{print $2}')
+[[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
+saved=0
+[[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
+[[ "$saved" =~ ^[0-9]+$ ]] || saved=0
+total=$(( bytes + saved ))
+usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
+
+# Active sessions (who shows logged-in users; add 1 for current connecting session)
+active_conns=$(who 2>/dev/null | awk -v u="$me" '$1==u{c++}END{print c+0}')
+[[ ! "$active_conns" =~ ^[0-9]+$ ]] && active_conns=0
+active_conns=$(( active_conns + 1 ))
+
+BRED='\033[1;31m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'
+YELLOW='\033[1;33m'; RED='\033[0;31m'; WHITE='\033[1;37m'; NC='\033[0m'
+
+echo ""
+echo -e "${BRED}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BRED}║       🔐 SSH TUNNEL MANAGER v9.0 — BLACK KILLER             ║${NC}"
+echo -e "${BRED}║              📱 WhatsApp: +255658785522                      ║${NC}"
+echo -e "${BRED}╠══════════════════════════════════════════════════════════════╣${NC}"
+printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "👤 USERNAME:" "$me"
+printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${YELLOW}%-34s${NC}${CYAN}║${NC}\n" "📅 EXPIRES:" "$exp"
+if [[ "$acc_status" == "locked" ]]; then
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "🔒 STATUS:" "LOCKED"
+elif [[ $current -gt $exp_unix ]]; then
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "EXPIRED"
+elif [[ $days_left -le 3 ]]; then
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left}d ${hours_left}h ⚠ EXPIRING SOON"
+else
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} days, ${hours_left} hours"
+fi
+if [[ "$gb_limit" -gt 0 ]]; then
+    pct=$(awk "BEGIN{printf \"%.0f\", ($usage_gb/$gb_limit)*100}")
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${CYAN}%-34s${NC}${CYAN}║${NC}\n" "📊 DATA USAGE:" "${usage_gb} GB / ${gb_limit} GB (${pct}%)"
+else
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "📊 DATA USAGE:" "${usage_gb} GB / UNLIMITED"
+fi
+if [[ "$conn_limit" -gt 0 ]]; then
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${CYAN}%-34s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} / ${conn_limit} SESSIONS"
+else
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} SESSION(S) / UNLIMITED"
+fi
+echo -e "${BRED}╠══════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${BRED}║  ⚠  AUTHORIZED ACCESS ONLY                                   ║${NC}"
+echo -e "${BRED}║  🔐 ALL SESSIONS ARE MONITORED AND LOGGED                    ║${NC}"
+echo -e "${BRED}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+exit 0
+PAM_BANNER_EOF
+    chmod 755 "$banner_script"
+
+    # Hook into PAM — remove any stale entry first, then append once.
+    if [[ -f "$pam_sshd" ]]; then
+        sed -i '/pam_exec.*user_banner/d' "$pam_sshd"
+        echo "session optional pam_exec.so stdout /etc/ssh/user_banner.sh" >> "$pam_sshd"
+    fi
+}
+
+remove_pam_banner() {
+    rm -f /etc/ssh/user_banner.sh 2>/dev/null || true
+    [[ -f /etc/pam.d/sshd ]] && sed -i '/pam_exec.*user_banner/d' /etc/pam.d/sshd 2>/dev/null || true
 }
 
 #============================================================
@@ -2881,8 +2988,8 @@ rm -f /etc/slowdns/limiter_autostart /etc/slowdns/limiter_daemon.sh 2>/dev/null 
 # user's ~/.bash_profile without opening the menu.
 if [[ "$1" == "--fix-motd" ]]; then
     [[ $EUID -ne 0 ]] && { echo "Run as root"; exit 1; }
-    update_motd_script
-    echo "✓ MOTD regenerated for all users"
+    update_motd_script      # writes profile.d + ~/.bash_profile per user + calls setup_pam_banner
+    echo "✓ MOTD and PAM banner regenerated for all users"
     exit 0
 fi
 
