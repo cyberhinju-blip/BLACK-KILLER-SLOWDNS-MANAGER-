@@ -45,7 +45,7 @@ BANNER_FILE="/etc/ssh/slowdns_banner"
 LOG_DIR="/var/log/dnstt"
 DNSTT_SERVER="/usr/local/bin/dnstt-server"
 DNSTT_CLIENT="/usr/local/bin/dnstt-client"
-SCRIPT_VERSION="9.2.5"
+SCRIPT_VERSION="9.2.6"
 GITHUB_RAW="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/slowdns_script.sh"
 GITHUB_VER="https://raw.githubusercontent.com/cyberhinju-blip/BLACK-KILLER-SLOWDNS-MANAGER-/main/version.txt"
 
@@ -1044,6 +1044,18 @@ add_ssh_user() {
     setup_user_quota "$username" "$gb_limit"
     update_motd_script
 
+    # Ensure new user's ~/.bash_profile calls the MOTD script directly.
+    # This covers login shells on systems where /etc/profile.d/ isn't sourced.
+    local new_home
+    new_home=$(getent passwd "$username" 2>/dev/null | cut -d: -f6)
+    if [[ -n "$new_home" && -d "$new_home" ]]; then
+        local new_bp="${new_home}/.bash_profile"
+        touch "$new_bp" 2>/dev/null
+        if ! grep -q 'slowdns_info' "$new_bp" 2>/dev/null; then
+            printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$new_bp"
+        fi
+    fi
+
     PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "YOUR_SERVER_IP")
     PUBKEY=$(cat "$INSTALL_DIR/server.pub" 2>/dev/null || echo "N/A")
 
@@ -1246,6 +1258,9 @@ _bk_motd() {
     [[ "$saved" =~ ^[0-9]+$ ]] || saved=0
     total=$(( bytes + saved ))
     usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
+    local active_conns
+    active_conns=$(who 2>/dev/null | awk -v u="$me" '$1==u{c++}END{print c+0}')
+    [[ ! "$active_conns" =~ ^[0-9]+$ ]] && active_conns=1
     echo ""
     echo -e "${BRED}╔═══════════════════════════════════════════════════════╗${NC}"
     echo -e "${BRED}║  ☠  BLACK KILLER — SSH TUNNEL MANAGER v9.0 ULTRA  ☠  ║${NC}"
@@ -1272,12 +1287,29 @@ _bk_motd() {
     local cl_text
     cl_text="$([ "$conn_limit" -eq 0 ] && echo UNLIMITED || echo "$conn_limit")"
     printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔗 CONN LIMIT:" "$cl_text"
+    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} SESSION(S)"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 _bk_motd
 MOTD_EOF
-    chmod +x "$motd_script" 2>/dev/null
+    chmod 755 "$motd_script" 2>/dev/null
+
+    # Write the MOTD call into every existing user's ~/.bash_profile so it
+    # runs for login shells even when /etc/profile.d/ is not sourced (e.g.
+    # non-standard PAM configs or VPN tunnel sessions).
+    local home_dir bp
+    while IFS='|' read -r user _rest; do
+        [[ -z "$user" ]] && continue
+        home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+        [[ -z "$home_dir" || ! -d "$home_dir" ]] && continue
+        bp="${home_dir}/.bash_profile"
+        # Create file if it doesn't exist, then append only if our line isn't there
+        touch "$bp" 2>/dev/null
+        if ! grep -q 'slowdns_info' "$bp" 2>/dev/null; then
+            printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$bp"
+        fi
+    done < "$USER_DB"
 }
 
 #============================================================
@@ -2265,6 +2297,11 @@ check_for_updates() {
     mv "$tmp_update" "$script_path"
     chmod +x "$script_path"
 
+    # Immediately regenerate profile.d and ~/.bash_profile for all users
+    # using the newly downloaded script — so the fix takes effect NOW,
+    # not only after the user manually navigates through a menu.
+    bash "$script_path" --fix-motd 2>/dev/null || true
+
     dbox_top
     log_success "UPDATE COMPLETE! v${SCRIPT_VERSION} → v${latest_ver}"
     echo -e "  ${WHITE}BACKUP SAVED AS:${NC} ${script_path}.backup.$(date +%Y%m%d)"
@@ -2839,15 +2876,24 @@ EOF
 screen -r -S limiter_daemon -X quit 2>/dev/null || true
 rm -f /etc/slowdns/limiter_autostart /etc/slowdns/limiter_daemon.sh 2>/dev/null || true
 
+# --fix-motd: non-interactive flag called by the auto-updater (and usable by
+# admins directly) to regenerate /etc/profile.d/slowdns_info.sh and each
+# user's ~/.bash_profile without opening the menu.
+if [[ "$1" == "--fix-motd" ]]; then
+    [[ $EUID -ne 0 ]] && { echo "Run as root"; exit 1; }
+    update_motd_script
+    echo "✓ MOTD regenerated for all users"
+    exit 0
+fi
+
 [[ ! -f /usr/local/bin/menu ]] && [[ $EUID -eq 0 ]] && create_menu_command 2>/dev/null
 
 check_root
 check_bash_version
 check_os
 
-# Auto-fix: if the installed profile.d script pre-dates the function-wrapper
-# fix (v9.2.4), regenerate it silently so returning users are fixed on the
-# first run of the new script without any manual menu action.
+# Auto-fix on startup: regenerate if profile.d is missing or pre-dates the
+# function-wrapper fix (lacks _bk_motd) so servers fix themselves on first run.
 if [[ -f /etc/profile.d/slowdns_info.sh ]] && \
    ! grep -q '_bk_motd' /etc/profile.d/slowdns_info.sh 2>/dev/null; then
     update_motd_script 2>/dev/null || true
