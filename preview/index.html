@@ -504,18 +504,30 @@ ${SEP}
   ${g('  1)')} ✏️  SET / EDIT BANNER TEXT
   ${y('  2)')} 🎨 SET DEFAULT BANNER
   ${r('  3)')} 🗑️  REMOVE BANNER
+  ${g('  4)')} 📊 DYNAMIC USER-STATS BANNER (PAM)
   ${w('  0)')} ⬅️  BACK
 
 ${SEP}
-${y('CURRENT BANNER PREVIEW:')}
+${y('DYNAMIC BANNER — shown to each user on SSH connect:')}
 ${BOT}
-${by('  ██████╗ ██╗      █████╗  ██████╗██╗  ██╗')}
-${by('  ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝')}
-${by('  ██████╔╝██║     ███████║██║     █████╔╝ ')}
-  ${w('  ⚠️  AUTHORIZED USERS ONLY')}
-  ${w('  📱 Support: +255658785522')}
-  ${w('  🔐 All connections are logged')}
+${br('╔══════════════════════════════════════════════════════════════╗')}
+${br('║       🔐 SSH TUNNEL MANAGER v9.0 — BLACK KILLER             ║')}
+${br('║              📱 WhatsApp: +255658785522                      ║')}
+${br('╠══════════════════════════════════════════════════════════════╣')}
+${c('c','║')}  ${w('👤 USERNAME:           ')} ${g('mudricky                          ')}${c('c','║')}
+${c('c','║')}  ${w('📅 EXPIRES:            ')} ${y('2026-12-31                        ')}${c('c','║')}
+${c('c','║')}  ${w('⏳ DAYS LEFT:          ')} ${g('179 days, 14 hours                ')}${c('c','║')}
+${c('c','║')}  ${w('📊 DATA USAGE:         ')} ${c('c','45.32 GB / 100 GB (45%)         ')}${c('c','║')}
+${c('c','║')}  ${w('🔌 ACTIVE CONN:        ')} ${c('c','2 / 5 SESSIONS                  ')}${c('c','║')}
+${br('╠══════════════════════════════════════════════════════════════╣')}
+${br('║  ⚠  AUTHORIZED ACCESS ONLY                                   ║')}
+${br('║  🔐 ALL SESSIONS ARE MONITORED AND LOGGED                    ║')}
+${br('╚══════════════════════════════════════════════════════════════╝')}
 ${BOT}
+${g('[✓]')} ${w('PRIMARY: PAM pam_exec (pam.d/sshd) — all SSH + VPN tunnel PTY sessions')}
+${g('[✓]')} ${w('FALLBACK: /etc/update-motd.d/ via PAM_USER (Ubuntu login shells)')}
+${g('[✓]')} ${w('FALLBACK: ~/.bash_profile (non-standard PAM / manual shell login)')}
+${g('[✓]')} ${w('No shell "return" errors — uses exit 0 / break pattern')}
 
 <span class="menu-item" onclick="choose('ssh')">${w('  [← BACK]')}</span>
 `;

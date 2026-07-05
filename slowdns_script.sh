@@ -1231,35 +1231,37 @@ update_motd_script() {
     local motd_script="/etc/profile.d/slowdns_info.sh"
     cat > "$motd_script" << 'MOTD_EOF'
 #!/bin/bash
-# Wrapped in a function so 'return' works whether this script is
-# sourced by a login shell or executed directly by sshd/PAM.
-_bk_motd() {
-    local USER_DB="/etc/slowdns/users.txt"
-    local USAGE_DIR="/etc/slowdns/usage"
-    local CYAN='\033[0;36m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
-    local RED='\033[0;31m' WHITE='\033[1;37m' BRED='\033[1;31m' NC='\033[0m'
-    [[ ! -f "$USER_DB" ]] && return 0
-    local me
-    me=$(whoami)
-    local user_line
-    user_line=$(grep "^${me}|" "$USER_DB" 2>/dev/null)
-    [[ -z "$user_line" ]] && return 0
-    local u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit
+# BLACK KILLER — dynamic SSH MOTD
+# Uses a single-iteration while loop so 'break' replaces 'return'.
+# Safe whether sourced by a login shell OR executed directly (no 'return' outside a function).
+while true; do
+    USER_DB="/etc/slowdns/users.txt"
+    USAGE_DIR="/etc/slowdns/usage"
+    CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    RED='\033[0;31m'; WHITE='\033[1;37m'; BRED='\033[1;31m'; NC='\033[0m'
+    [[ ! -f "$USER_DB" ]] && break
+    # PAM_USER is set by pam_exec/pam_motd (covers update-motd.d + pam_exec paths).
+    # LOGNAME is set for login shells. logname/whoami as last resort.
+    me="${PAM_USER:-${LOGNAME:-$(logname 2>/dev/null || whoami 2>/dev/null)}}"
+    [[ -z "$me" || "$me" == "root" ]] && break
+    user_line=$(awk -F'|' -v u="$me" '$1==u{print; exit}' "$USER_DB" 2>/dev/null)
+    [[ -z "$user_line" ]] && break
     IFS='|' read -r u pass exp created gb_limit acc_status ar_days ar_trigger conn_limit <<< "$user_line"
     gb_limit=${gb_limit:-0}; acc_status=${acc_status:-active}; conn_limit=${conn_limit:-0}
-    local current exp_unix days_left
     current=$(date +%s)
     exp_unix=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-    days_left=$(( (exp_unix - current) / 86400 ))
-    local bytes=0 raw saved=0 total usage_gb
+    secs_left=$(( exp_unix - current ))
+    days_left=$(( secs_left / 86400 ))
+    hours_left=$(( (secs_left % 86400) / 3600 ))
     # Bytes live on the OUTPUT jump rule, not inside the (empty) per-user chain
+    bytes=0
     raw=$(iptables -L OUTPUT -xvn 2>/dev/null | awk -v chain="slowdns_${me}" '$NF==chain{print $2}')
     [[ "$raw" =~ ^[0-9]+$ ]] && bytes=$raw
+    saved=0
     [[ -f "$USAGE_DIR/$me" ]] && saved=$(cat "$USAGE_DIR/$me" 2>/dev/null)
     [[ "$saved" =~ ^[0-9]+$ ]] || saved=0
     total=$(( bytes + saved ))
     usage_gb=$(awk "BEGIN{printf \"%.2f\", $total/1073741824}")
-    local active_conns uid
     active_conns=$(who 2>/dev/null | awk -v u="$me" '$1==u{c++}END{print c+0}')
     if [[ ! "$active_conns" =~ ^[0-9]+$ || "$active_conns" -eq 0 ]]; then
         uid=$(id -u 2>/dev/null)
@@ -1267,36 +1269,39 @@ _bk_motd() {
     fi
     [[ ! "$active_conns" =~ ^[0-9]+$ || "$active_conns" -eq 0 ]] && active_conns=1
     echo ""
-    echo -e "${BRED}╔═══════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BRED}║  ☠  BLACK KILLER — SSH TUNNEL MANAGER v9.0 ULTRA  ☠  ║${NC}"
-    echo -e "${BRED}║            📱 WhatsApp: +255658785522               ║${NC}"
-    echo -e "${BRED}╠═══════════════════════════════════════════════════════╣${NC}"
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "👤 USERNAME:" "$me"
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${YELLOW}%-32s${NC}${CYAN}║${NC}\n" "📅 EXPIRES:" "$exp"
+    echo -e "${BRED}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BRED}║       🔐 SSH TUNNEL MANAGER v9.0 — BLACK KILLER             ║${NC}"
+    echo -e "${BRED}║              📱 WhatsApp: +255658785522                      ║${NC}"
+    echo -e "${BRED}╠══════════════════════════════════════════════════════════════╣${NC}"
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "👤 USERNAME:" "$me"
+    printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${YELLOW}%-34s${NC}${CYAN}║${NC}\n" "📅 EXPIRES:" "$exp"
     if [[ "$acc_status" == "locked" ]]; then
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "🔒 STATUS:" "LOCKED"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "🔒 STATUS:" "LOCKED"
     elif [[ $current -gt $exp_unix ]]; then
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "EXPIRED"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "EXPIRED"
     elif [[ $days_left -le 3 ]]; then
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${RED}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS (EXPIRING SOON!)"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${RED}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left}d ${hours_left}h ⚠ EXPIRING SOON"
     else
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} DAYS"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "⏳ DAYS LEFT:" "${days_left} days, ${hours_left} hours"
     fi
     if [[ "$gb_limit" -gt 0 ]]; then
-        local pct
         pct=$(awk "BEGIN{printf \"%.0f\", ($usage_gb/$gb_limit)*100}")
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / ${gb_limit} GB (${pct}%)"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${CYAN}%-34s${NC}${CYAN}║${NC}\n" "📊 DATA USAGE:" "${usage_gb} GB / ${gb_limit} GB (${pct}%)"
     else
-        printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${GREEN}%-32s${NC}${CYAN}║${NC}\n" "📶 DATA USED:" "${usage_gb} GB / UNLIMITED"
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "📊 DATA USAGE:" "${usage_gb} GB / UNLIMITED"
     fi
-    local cl_text
-    cl_text="$([ "$conn_limit" -eq 0 ] && echo UNLIMITED || echo "$conn_limit")"
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔗 CONN LIMIT:" "$cl_text"
-    printf "${CYAN}║${NC}  ${WHITE}%-20s${NC} ${CYAN}%-32s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} SESSION(S)"
-    echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+    if [[ "$conn_limit" -gt 0 ]]; then
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${CYAN}%-34s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} / ${conn_limit} SESSIONS"
+    else
+        printf "${CYAN}║${NC}  ${WHITE}%-22s${NC} ${GREEN}%-34s${NC}${CYAN}║${NC}\n" "🔌 ACTIVE CONN:" "${active_conns} SESSION(S) / UNLIMITED"
+    fi
+    echo -e "${BRED}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BRED}║  ⚠  AUTHORIZED ACCESS ONLY                                   ║${NC}"
+    echo -e "${BRED}║  🔐 ALL SESSIONS ARE MONITORED AND LOGGED                    ║${NC}"
+    echo -e "${BRED}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-}
-_bk_motd
+    break
+done
 MOTD_EOF
     chmod 755 "$motd_script" 2>/dev/null
 
@@ -1315,6 +1320,17 @@ MOTD_EOF
         sed -i '/slowdns_info\|BLACK KILLER MOTD\|pam_exec.*user_banner/d' "$bp" 2>/dev/null
         printf '\n# BLACK KILLER MOTD\n[[ -x /etc/profile.d/slowdns_info.sh ]] && bash /etc/profile.d/slowdns_info.sh\n' >> "$bp"
     done < "$USER_DB"
+
+    # Also install into /etc/update-motd.d/ (Ubuntu/Debian automatic MOTD system).
+    # Scripts in this directory are executed by pam_motd on every login,
+    # giving us a third reliable trigger beyond profile.d and pam_exec.
+    local motd_d="/etc/update-motd.d/99-slowdns"
+    if [[ -d /etc/update-motd.d ]]; then
+        cp "$motd_script" "$motd_d" 2>/dev/null
+        chmod 755 "$motd_d" 2>/dev/null
+        # Silence the static /etc/motd so only our dynamic script runs.
+        [[ -f /etc/motd ]] && : > /etc/motd 2>/dev/null || true
+    fi
 
     # Set up the PAM-based dynamic banner as the primary display mechanism.
     setup_pam_banner
